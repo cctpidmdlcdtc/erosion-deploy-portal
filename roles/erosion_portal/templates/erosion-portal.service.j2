@@ -1,0 +1,15 @@
+# /etc/systemd/system/erosion-portal.service
+[Unit]
+Description=Erosion web portal
+After=network.target
+
+[Service]
+Type=simple
+User=ceon
+WorkingDirectory={{ portal_dir }}/backend
+ExecStart={{portal_dir }}/backend/venv/bin/hug -p 8084 -f app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

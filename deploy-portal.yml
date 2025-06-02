@@ -1,0 +1,6 @@
+---
+- name: Deploy Erosion portal
+  hosts: portals
+  become: yes
+  roles:
+    - erosion_portal

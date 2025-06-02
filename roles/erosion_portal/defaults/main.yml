@@ -1,0 +1,7 @@
+portal_dir: "/opt/erosion/portal"
+portal_fqdn: erosion.es
+
+coturn_secret: pleasedontihaveacat
+
+haproxy_user: ceon
+haproxy_pass: 1234

@@ -1,0 +1,7 @@
+---
+wireguard_role: client
+wireguard_interface: wg0
+wireguard_port: 51820
+wireguard_server_endpoint: "{{ hostvars[groups['portals'][0]]['ansible_default_ipv4']['address'] }}"
+wireguard_server_port: 51820
+wireguard_allowed_ips: "10.0.0.1/32"

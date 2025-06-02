@@ -1,0 +1,18 @@
+all:
+  children:
+    portals:
+      hosts:
+        webpro:
+          ansible_host: 192.168.1.100
+          wireguard_role: server
+          wireguard_server_ip: "10.0.0.1/24"
+    cores:
+      hosts:
+        pizero2w1:
+          ansible_host: 192.168.1.21
+          wireguard_role: client
+          wireguard_client_ip: "10.0.0.2/32"
+        pizero2w2:
+          ansible_host: 192.168.1.22
+          wireguard_role: client
+          wireguard_client_ip: "10.0.0.3/32"

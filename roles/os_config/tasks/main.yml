@@ -1,0 +1,28 @@
+
+# system update
+# user ceon without pass with sudo
+# no root login
+
+
+- name: Ensure troubleshooting packages are installed
+  package:
+    name:
+      - tcpdump
+      - iotop
+      - cbm
+    state: present
+
+
+
+
+# deploy-erosion-core
+# - wireguard
+
+
+
+- name: Ensure podman is installed in order to run certbot container
+  package:
+    name:
+      - podman
+    state: present
+

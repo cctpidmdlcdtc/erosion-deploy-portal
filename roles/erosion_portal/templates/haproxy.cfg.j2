@@ -1,0 +1,47 @@
+# front end acme challenge
+frontend http80
+    bind   *:80
+    mode   http
+    option tcplog
+
+    # check for acme challange and validate url
+    acl test_acme      path_beg  /.well-known/acme-challenge/
+    acl erosion_host  hdr(host) -i {{ portal_fqdn }}
+
+    # if no acme challenge redirect https
+    redirect scheme https code 301 if !test_acme
+
+    # on acme challenge forward :80 to backend server
+    use_backend le_erosion_backend  if test_acme erosion_host
+
+# frontend normal https traffic to valid urls
+frontend https443
+    bind   *:443
+    mode   tcp
+    option tcplog
+
+    tcp-request inspect-delay 10s
+    tcp-request content accept if { req.ssl_hello_type 1 }
+
+    use_backend backend_erosion   if { req.ssl_sni -m end {{ portal_fqdn }} }
+
+backend backend_erosion
+    mode tcp
+    server erosion_server 127.0.0.1:44304 check send-proxy
+
+backend le_erosion_backend
+    mode http
+    server letsencrypt_erosion_server localhost:8094 check
+
+userlist stats-auth
+    group admin users {{ haproxy_user }}
+    user {{ haproxy_user }} insecure-password {{ haproxy_pass }}
+
+listen stats
+    bind 127.0.0.1:8088
+    mode http
+    stats uri /haproxy?stats
+    acl AUTH http_auth(stats-auth)
+    acl AUTH_ADMIN http_auth_group(stats-auth) admin
+    stats http-request auth unless AUTH
+    stats admin if AUTH_ADMIN

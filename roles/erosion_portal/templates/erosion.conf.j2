@@ -1,0 +1,206 @@
+server {
+    # para exponer a internet
+    #listen 443 ssl;
+    # detras de un haproxy
+    listen 127.0.0.1:44304 ssl proxy_protocol;
+    # para poder hacer pruebas contra el nginx directamente
+    #listen localhost:8443 ssl;
+    server_name erosion.es;
+
+    ssl_certificate /opt/certbot/etc/live/erosion.es/fullchain.pem; 
+    ssl_certificate_key /opt/certbot/etc/live/erosion.es/privkey.pem;
+#    ssl_client_certificate /opt/myCA/certs/ca.cert.pem;
+#    ssl_crl /opt/myCA/crl/ca.crl.pem;
+#    ssl_verify_client on;
+
+    access_log /var/log/nginx/erosion.access.log;
+    error_log /var/log/nginx/erosion.error.log;
+
+    set_real_ip_from 127.0.0.1;
+    #set_real_ip_from ::1;
+    real_ip_header proxy_protocol;
+    real_ip_recursive on;
+
+    location / {
+        root /opt/erosion/portal/frontend;
+        index index.html;
+    }
+
+    location ~* (^/auth|^/users|^/cars|^/tracks|^/user/|^/reservations) {
+        proxy_pass http://127.0.0.1:8084;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-NginX-Proxy true;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        # si no, wordpress no funciona
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+    }
+
+    #location ~* (jimny|fortwo|usbcam|portatil|offer$|/ws$) {
+    location /pizero2w1/ {
+        proxy_pass http://10.0.0.2/;
+
+        proxy_set_header Authorization "Basic Y2Vvbjo2MGZwcw==";  # echo -n 'admin:1234' | base64
+        proxy_set_header Host 10.0.0.2;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Configuración específica para WebSocket
+        proxy_http_version 1.1; # Necesario para WebSocket, ya que utiliza HTTP/1.1
+        proxy_set_header Upgrade $http_upgrade; # Maneja la cabecera de actualización de protocolo WebSocket
+        proxy_set_header Connection "upgrade"; # Establece la cabecera Connection para indicar que se está actualizando la conexión
+        proxy_read_timeout 86400;  # Timeout para conexiones WebSocket (24h)
+
+        # Reescritura de enlaces para mantener la URL original
+        sub_filter_once off;
+        sub_filter_types text/html text/css text/javascript application/javascript;
+        sub_filter '10.0.0.2' 'erosion.es';
+        sub_filter 'https://10.0.0.2' 'https://erosion.es';
+
+#    # Certificado cliente para autenticarse con HAProxy
+#    proxy_ssl_certificate /opt/ssl-client/client.crt;
+#    proxy_ssl_certificate_key /opt/ssl-client/client.key;
+#   
+#    # Configuración para validar el certificado de HAProxy
+#    proxy_ssl_verify on;
+#    proxy_ssl_trusted_certificate /opt/ssl-client/ca.crt;
+#    proxy_ssl_verify_depth 2;
+
+    }
+
+    location /pizero2w2/ {
+        proxy_pass http://10.0.0.3/;
+
+        proxy_set_header Authorization "Basic Y2Vvbjo2MGZwcw==";  # echo -n 'admin:1234' | base64
+        proxy_set_header Host 10.0.0.3;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Configuración específica para WebSocket
+        proxy_http_version 1.1; # Necesario para WebSocket, ya que utiliza HTTP/1.1
+        proxy_set_header Upgrade $http_upgrade; # Maneja la cabecera de actualización de protocolo WebSocket
+        proxy_set_header Connection "upgrade"; # Establece la cabecera Connection para indicar que se está actualizando la conexión
+        proxy_read_timeout 86400;  # Timeout para conexiones WebSocket (24h)
+
+        # Reescritura de enlaces para mantener la URL original
+        sub_filter_once off;
+        sub_filter_types text/html text/css text/javascript application/javascript;
+        sub_filter '10.0.0.3' 'erosion.es';
+        sub_filter 'https://10.0.0.3' 'https://erosion.es';
+
+#    # Certificado cliente para autenticarse con HAProxy
+#    proxy_ssl_certificate /opt/ssl-client/client.crt;
+#    proxy_ssl_certificate_key /opt/ssl-client/client.key;
+#   
+#    # Configuración para validar el certificado de HAProxy
+#    proxy_ssl_verify on;
+#    proxy_ssl_trusted_certificate /opt/ssl-client/ca.crt;
+#    proxy_ssl_verify_depth 2;
+
+    }
+
+    location /chovelle/ {
+        proxy_pass http://10.0.0.4/;
+
+        proxy_set_header Authorization "Basic Y2Vvbjo2MGZwcw==";  # echo -n 'admin:1234' | base64
+        proxy_set_header Host 10.0.0.4;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Configuración específica para WebSocket
+        proxy_http_version 1.1; # Necesario para WebSocket, ya que utiliza HTTP/1.1
+        proxy_set_header Upgrade $http_upgrade; # Maneja la cabecera de actualización de protocolo WebSocket
+        proxy_set_header Connection "upgrade"; # Establece la cabecera Connection para indicar que se está actualizando la conexión
+        proxy_read_timeout 86400;  # Timeout para conexiones WebSocket (24h)
+
+        # Reescritura de enlaces para mantener la URL original
+        sub_filter_once off;
+        sub_filter_types text/html text/css text/javascript application/javascript;
+        sub_filter '10.0.0.4' 'erosion.es';
+        sub_filter 'https://10.0.0.4' 'https://erosion.es';
+
+#    # Certificado cliente para autenticarse con HAProxy
+#    proxy_ssl_certificate /opt/ssl-client/client.crt;
+#    proxy_ssl_certificate_key /opt/ssl-client/client.key;
+#   
+#    # Configuración para validar el certificado de HAProxy
+#    proxy_ssl_verify on;
+#    proxy_ssl_trusted_certificate /opt/ssl-client/ca.crt;
+#    proxy_ssl_verify_depth 2;
+
+    }
+
+    location /pi3b/ {
+        proxy_pass http://10.0.0.5/;
+
+        proxy_set_header Authorization "Basic Y2Vvbjo2MGZwcw==";  # echo -n 'admin:1234' | base64
+        proxy_set_header Host 10.0.0.5;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Configuración específica para WebSocket
+        proxy_http_version 1.1; # Necesario para WebSocket, ya que utiliza HTTP/1.1
+        proxy_set_header Upgrade $http_upgrade; # Maneja la cabecera de actualización de protocolo WebSocket
+        proxy_set_header Connection "upgrade"; # Establece la cabecera Connection para indicar que se está actualizando la conexión
+        proxy_read_timeout 86400;  # Timeout para conexiones WebSocket (24h)
+
+        # Reescritura de enlaces para mantener la URL original
+        sub_filter_once off;
+        sub_filter_types text/html text/css text/javascript application/javascript;
+        sub_filter '10.0.0.5' 'erosion.es';
+        sub_filter 'https://10.0.0.5' 'https://erosion.es';
+
+#    # Certificado cliente para autenticarse con HAProxy
+#    proxy_ssl_certificate /opt/ssl-client/client.crt;
+#    proxy_ssl_certificate_key /opt/ssl-client/client.key;
+#   
+#    # Configuración para validar el certificado de HAProxy
+#    proxy_ssl_verify on;
+#    proxy_ssl_trusted_certificate /opt/ssl-client/ca.crt;
+#    proxy_ssl_verify_depth 2;
+
+    }
+
+
+    location /wifilink2/ {
+        proxy_pass http://10.0.0.6:5000/;
+
+        #proxy_set_header Authorization "Basic Y2Vvbjo2MGZwcw==";  # echo -n 'admin:1234' | base64
+        proxy_set_header Host 10.0.0.6;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Configuración específica para WebSocket
+        proxy_http_version 1.1; # Necesario para WebSocket, ya que utiliza HTTP/1.1
+        proxy_set_header Upgrade $http_upgrade; # Maneja la cabecera de actualización de protocolo WebSocket
+        proxy_set_header Connection "upgrade"; # Establece la cabecera Connection para indicar que se está actualizando la conexión
+        proxy_read_timeout 86400;  # Timeout para conexiones WebSocket (24h)
+
+        # Reescritura de enlaces para mantener la URL original
+        sub_filter_once off;
+        sub_filter_types text/html text/css text/javascript application/javascript;
+        sub_filter '10.0.0.6' 'erosion.es';
+        sub_filter 'https://10.0.0.6' 'https://erosion.es';
+
+#    # Certificado cliente para autenticarse con HAProxy
+#    proxy_ssl_certificate /opt/ssl-client/client.crt;
+#    proxy_ssl_certificate_key /opt/ssl-client/client.key;
+#   
+#    # Configuración para validar el certificado de HAProxy
+#    proxy_ssl_verify on;
+#    proxy_ssl_trusted_certificate /opt/ssl-client/ca.crt;
+#    proxy_ssl_verify_depth 2;
+
+    }
+
+
+}
