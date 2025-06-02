@@ -7,7 +7,7 @@ After=network.target
 Type=simple
 User=ceon
 WorkingDirectory={{ portal_dir }}/backend
-ExecStart={{portal_dir }}/backend/venv/bin/hug -p 8084 -f app.py
+ExecStart={{portal_dir }}/venv/bin/hug -p 8084 -f app.py
 Restart=always
 RestartSec=3
 

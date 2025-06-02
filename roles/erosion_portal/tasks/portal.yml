@@ -1,0 +1,60 @@
+---
+- name: Create user
+  user:
+    name: erosion
+    shell: /bin/bash
+    create_home: no
+    state: present
+
+- name: Create destination directory if it doesn't exist
+  file:
+    path: "{{ portal_dir }}"
+    state: directory
+    mode: '0755'
+    owner: erosion
+
+- name: Ensure pip is installed
+  package:
+    name:
+      - python3-venv
+    state: present
+
+- block:
+
+  - name: Create Python virtual environment
+    command: python3 -m venv "{{ portal_dir }}/venv"
+    args:
+      creates: "{{ portal_dir }}/venv/bin/activate"
+
+  - name: Upgrade pip in virtual environment
+    pip:
+      name: pip
+      state: latest
+      virtualenv: "{{ portal_dir }}/venv"
+
+  - name: Install requirements from requirements.txt
+    pip:
+      requirements: "{{ portal_dir }}/backend/requirements.txt"
+      virtualenv: "{{ portal_dir }}/venv"
+
+  become_user: erosion
+
+
+- name: Create systemd service template
+  template:
+    src: erosion-portal.service.j2
+    dest: /etc/systemd/system/erosion-portal.service
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart erosion-portal
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes
+
+- name: Enable and start erosion-portal service
+  systemd:
+    name: erosion-portal
+    enabled: yes
+    state: started

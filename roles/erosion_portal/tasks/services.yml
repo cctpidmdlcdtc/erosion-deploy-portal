@@ -1,0 +1,67 @@
+---
+- name: Ensure required packages are installed
+  package:
+    name:
+      - nginx
+      - haproxy
+      - coturn
+    state: present
+
+- name: Deploy HAProxy configuration
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart HAProxy
+
+- name: Ensure HAProxy service is enabled and started
+  service:
+    name: haproxy
+    state: started
+    enabled: yes
+
+- name: Deploy Nginx site configuration
+  template:
+    src: erosion.conf.j2
+    dest: /etc/nginx/sites-available/erosion.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload Nginx
+
+- name: Enable Nginx site
+  file:
+    src: /etc/nginx/sites-available/erosion.conf
+    dest: /etc/nginx/sites-enabled/erosion.conf
+    state: link
+    force: yes
+  notify: Reload Nginx
+
+- name: Disable default site if present
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload Nginx
+
+- name: Ensure Nginx service is enabled and started
+  service:
+    name: nginx
+    state: started
+    enabled: yes
+
+- name: Deploy coturn configuration
+  template:
+    src: turnserver.conf.j2
+    dest: /etc/turnserver.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart coturn
+  
+- name: Ensure coturn service is enabled and started
+  service:
+    name: coturn
+    state: started
+    enabled: yes
