@@ -1,0 +1,13 @@
+---
+TZ: "Europe/Madrid"
+IPV4_NETWORK: "172.22.1"
+IPV6_NETWORK: "fd4d:6169:6c63:6f77::/64"
+MAILCOW_HOSTNAME: "mail.erosion.es"
+DBROOT: "1234"
+DBNAME: "mailcow"
+DBUSER: "mailcow"
+DBPASS: "1234"
+REDISPASS: "1234"
+API_KEY: "your_api_key"
+API_KEY_READ_ONLY: "your_readonly_api_key"
+COMPOSE_PROJECT_NAME: "mailcow-dockerized"

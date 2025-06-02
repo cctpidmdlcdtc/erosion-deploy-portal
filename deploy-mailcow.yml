@@ -1,0 +1,6 @@
+---
+- name: Deploy mailcow
+  hosts: portals
+  become: yes
+  roles:
+    - mailcow

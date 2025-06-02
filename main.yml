@@ -1,0 +1,590 @@
+---
+block:
+  - name: Create mailcow network
+    containers.podman.podman_network:
+      name: mailcow-network
+      driver: bridge
+      enable_ipv6: true
+      ipam_driver: host-local
+      subnet:
+        - "{{ IPV4_NETWORK }}.0/24"
+        - "{{ IPV6_NETWORK }}"
+      state: present
+
+  - name: Create named volumes
+    containers.podman.podman_volume:
+      name: "{{ item }}"
+      state: present
+    loop:
+      - vmail-vol-1
+      - vmail-index-vol-1
+      - mysql-vol-1
+      - mysql-socket-vol-1
+      - redis-vol-1
+      - rspamd-vol-1
+      - postfix-vol-1
+      - crypt-vol-1
+      - sogo-web-vol-1
+      - sogo-userdata-backup-vol-1
+      - clamd-db-vol-1
+
+    tags: paco
+
+
+
+
+block:
+  - name: Start unbound-mailcow container
+    containers.podman.podman_container:
+      name: unbound-mailcow
+      image: ghcr.io/mailcow/unbound:1.24
+      state: started
+      restart_policy: always
+      tty: true
+      networks:
+        - name: mailcow-network
+          ipv4_address: "{{ IPV4_NETWORK }}.254"
+          aliases:
+            - unbound
+      env:
+        TZ: "{{ TZ }}"
+        SKIP_UNBOUND_HEALTHCHECK: "{{ SKIP_UNBOUND_HEALTHCHECK | default('n') }}"
+      volumes:
+        - ./data/hooks/unbound:/hooks:Z
+        - ./data/conf/unbound/unbound.conf:/etc/unbound/unbound.conf:ro,Z
+
+  - name: Start netfilter-mailcow container
+    containers.podman.podman_container:
+      name: netfilter-mailcow
+      image: ghcr.io/mailcow/netfilter:1.61
+      state: started
+      restart_policy: always
+      privileged: true
+      network_mode: host
+      stop_grace_period: 30
+      env:
+        TZ: "{{ TZ }}"
+        IPV4_NETWORK: "{{ IPV4_NETWORK }}"
+        IPV6_NETWORK: "{{ IPV6_NETWORK }}"
+        SNAT_TO_SOURCE: "{{ SNAT_TO_SOURCE | default('n') }}"
+        SNAT6_TO_SOURCE: "{{ SNAT6_TO_SOURCE | default('n') }}"
+        REDISPASS: "{{ REDISPASS }}"
+        MAILCOW_REPLICA_IP: "{{ MAILCOW_REPLICA_IP | default('') }}"
+        DISABLE_NETFILTER_ISOLATION_RULE: "{{ DISABLE_NETFILTER_ISOLATION_RULE | default('n') }}"
+      volumes:
+        - /lib/modules:/lib/modules:ro
+
+  - name: Start mysql-mailcow container
+    containers.podman.podman_container:
+      name: mysql-mailcow
+      image: mariadb:10.11
+      state: started
+      restart_policy: always
+      stop_grace_period: 45
+      networks:
+        - name: mailcow-network
+          aliases:
+            - mysql
+      ports:
+        - "{{ SQL_PORT | default('127.0.0.1:13306') }}:3306"
+      env:
+        TZ: "{{ TZ }}"
+        MYSQL_ROOT_PASSWORD: "{{ DBROOT }}"
+        MYSQL_DATABASE: "{{ DBNAME }}"
+        MYSQL_USER: "{{ DBUSER }}"
+        MYSQL_PASSWORD: "{{ DBPASS }}"
+        MYSQL_INITDB_SKIP_TZINFO: "1"
+      volumes:
+        - mysql-vol-1:/var/lib/mysql/
+        - mysql-socket-vol-1:/var/run/mysqld/
+        - ./data/conf/mysql/:/etc/mysql/conf.d/:ro,Z
+
+  # Wait for MySQL to be ready
+  - name: Wait for MySQL to be ready
+    wait_for:
+      port: "{{ SQL_PORT.split(':')[-1] | default('13306') }}"
+      host: "{{ SQL_PORT.split(':')[0] | default('127.0.0.1') }}"
+      delay: 10
+      timeout: 60
+
+  - name: Start redis-mailcow container
+    containers.podman.podman_container:
+      name: redis-mailcow
+      image: redis:7.4.2-alpine
+      state: started
+      restart_policy: always
+      entrypoint: ["/bin/sh", "/redis-conf.sh"]
+      networks:
+        - name: mailcow-network
+          ipv4_address: "{{ IPV4_NETWORK }}.249"
+          aliases:
+            - redis
+      ports:
+        - "{{ REDIS_PORT | default('127.0.0.1:7654') }}:6379"
+      env:
+        TZ: "{{ TZ }}"
+        REDISPASS: "{{ REDISPASS }}"
+        REDISMASTERPASS: "{{ REDISMASTERPASS | default('') }}"
+      sysctls:
+        net.core.somaxconn: "4096"
+      volumes:
+        - redis-vol-1:/data/
+        - ./data/conf/redis/redis-conf.sh:/redis-conf.sh:z
+
+  - name: Start clamd-mailcow container
+    containers.podman.podman_container:
+      name: clamd-mailcow
+      image: ghcr.io/mailcow/clamd:1.70
+      state: started
+      restart_policy: always
+      networks:
+        - name: mailcow-network
+          aliases:
+            - clamd
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      env:
+        TZ: "{{ TZ }}"
+        SKIP_CLAMD: "{{ SKIP_CLAMD | default('n') }}"
+      volumes:
+        - ./data/conf/clamav/:/etc/clamav/:Z
+        - clamd-db-vol-1:/var/lib/clamav
+
+  - name: Start dovecot-mailcow container
+    containers.podman.podman_container:
+      name: dovecot-mailcow
+      image: ghcr.io/mailcow/dovecot:2.33
+      state: started
+      restart_policy: always
+      tty: true
+      capabilities:
+        - NET_BIND_SERVICE
+      networks:
+        - name: mailcow-network
+          ipv4_address: "{{ IPV4_NETWORK }}.250"
+          aliases:
+            - dovecot
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      ports:
+        - "{{ DOVEADM_PORT | default('127.0.0.1:19991') }}:12345"
+        - "{{ IMAP_PORT | default('143') }}:143"
+        - "{{ IMAPS_PORT | default('993') }}:993"
+        - "{{ POP_PORT | default('110') }}:110"
+        - "{{ POPS_PORT | default('995') }}:995"
+        - "{{ SIEVE_PORT | default('4190') }}:4190"
+      ulimits:
+        - nproc=65535
+        - nofile=20000:40000
+      env:
+        DOVECOT_MASTER_USER: "{{ DOVECOT_MASTER_USER | default('') }}"
+        DOVECOT_MASTER_PASS: "{{ DOVECOT_MASTER_PASS | default('') }}"
+        LOG_LINES: "{{ LOG_LINES | default('9999') }}"
+        DBNAME: "{{ DBNAME }}"
+        DBUSER: "{{ DBUSER }}"
+        DBPASS: "{{ DBPASS }}"
+        TZ: "{{ TZ }}"
+        MAILCOW_HOSTNAME: "{{ MAILCOW_HOSTNAME }}"
+        MAILCOW_PASS_SCHEME: "{{ MAILCOW_PASS_SCHEME | default('BLF-CRYPT') }}"
+        IPV4_NETWORK: "{{ IPV4_NETWORK }}"
+        ALLOW_ADMIN_EMAIL_LOGIN: "{{ ALLOW_ADMIN_EMAIL_LOGIN | default('n') }}"
+        MAILDIR_GC_TIME: "{{ MAILDIR_GC_TIME | default('7200') }}"
+        ACL_ANYONE: "{{ ACL_ANYONE | default('disallow') }}"
+        SKIP_FTS: "{{ SKIP_FTS | default('y') }}"
+        FTS_HEAP: "{{ FTS_HEAP | default('512') }}"
+        FTS_PROCS: "{{ FTS_PROCS | default('3') }}"
+        MAILDIR_SUB: "{{ MAILDIR_SUB | default('') }}"
+        MASTER: "{{ MASTER | default('y') }}"
+        REDISPASS: "{{ REDISPASS }}"
+        COMPOSE_PROJECT_NAME: "{{ COMPOSE_PROJECT_NAME }}"
+      volumes:
+        - ./data/hooks/dovecot:/hooks:Z
+        - ./data/conf/dovecot:/etc/dovecot:z
+        - ./data/assets/ssl:/etc/ssl/mail/:ro,z
+        - ./data/conf/sogo/:/etc/sogo/:z
+        - ./data/conf/phpfpm/sogo-sso/:/etc/phpfpm/:z
+        - vmail-vol-1:/var/vmail
+        - vmail-index-vol-1:/var/vmail_index
+        - crypt-vol-1:/mail_crypt/
+        - ./data/conf/rspamd/custom/:/etc/rspamd/custom:z
+        - ./data/assets/templates:/templates:z
+        - rspamd-vol-1:/var/lib/rspamd
+        - mysql-socket-vol-1:/var/run/mysqld/
+      labels:
+        ofelia.enabled: "true"
+        ofelia.job-exec.dovecot_imapsync_runner.schedule: "@every 1m"
+        ofelia.job-exec.dovecot_imapsync_runner.no-overlap: "true"
+        ofelia.job-exec.dovecot_imapsync_runner.command: '/bin/bash -c "[[ $${MASTER} == y ]] && /usr/local/bin/gosu nobody /usr/local/bin/imapsync_runner.pl || exit 0"'
+
+  - name: Start rspamd-mailcow container
+    containers.podman.podman_container:
+      name: rspamd-mailcow
+      image: ghcr.io/mailcow/rspamd:2.2
+      state: started
+      restart_policy: always
+      hostname: rspamd
+      stop_grace_period: 30
+      networks:
+        - name: mailcow-network
+          aliases:
+            - rspamd
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      env:
+        TZ: "{{ TZ }}"
+        IPV4_NETWORK: "{{ IPV4_NETWORK }}"
+        IPV6_NETWORK: "{{ IPV6_NETWORK }}"
+        REDISPASS: "{{ REDISPASS }}"
+        SPAMHAUS_DQS_KEY: "{{ SPAMHAUS_DQS_KEY | default('') }}"
+      volumes:
+        - ./data/hooks/rspamd:/hooks:Z
+        - ./data/conf/rspamd/custom/:/etc/rspamd/custom:z
+        - ./data/conf/rspamd/override.d/:/etc/rspamd/override.d:Z
+        - ./data/conf/rspamd/local.d/:/etc/rspamd/local.d:Z
+        - ./data/conf/rspamd/plugins.d/:/etc/rspamd/plugins.d:Z
+        - ./data/conf/rspamd/lua/:/etc/rspamd/lua/:ro,Z
+        - ./data/conf/rspamd/rspamd.conf.local:/etc/rspamd/rspamd.conf.local:Z
+        - ./data/conf/rspamd/rspamd.conf.override:/etc/rspamd/rspamd.conf.override:Z
+        - rspamd-vol-1:/var/lib/rspamd
+
+  - name: Start php-fpm-mailcow container
+    containers.podman.podman_container:
+      name: php-fpm-mailcow
+      image: ghcr.io/mailcow/phpfpm:1.93
+      state: started
+      restart_policy: always
+      command: "php-fpm -d date.timezone={{ TZ }} -d expose_php=0"
+      networks:
+        - name: mailcow-network
+          aliases:
+            - phpfpm
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      env:
+        REDISPASS: "{{ REDISPASS }}"
+        LOG_LINES: "{{ LOG_LINES | default('9999') }}"
+        TZ: "{{ TZ }}"
+        DBNAME: "{{ DBNAME }}"
+        DBUSER: "{{ DBUSER }}"
+        DBPASS: "{{ DBPASS }}"
+        MAILCOW_HOSTNAME: "{{ MAILCOW_HOSTNAME }}"
+        MAILCOW_PASS_SCHEME: "{{ MAILCOW_PASS_SCHEME | default('BLF-CRYPT') }}"
+        IMAP_PORT: "{{ IMAP_PORT | default('143') }}"
+        IMAPS_PORT: "{{ IMAPS_PORT | default('993') }}"
+        POP_PORT: "{{ POP_PORT | default('110') }}"
+        POPS_PORT: "{{ POPS_PORT | default('995') }}"
+        SIEVE_PORT: "{{ SIEVE_PORT | default('4190') }}"
+        IPV4_NETWORK: "{{ IPV4_NETWORK }}"
+        IPV6_NETWORK: "{{ IPV6_NETWORK }}"
+        SUBMISSION_PORT: "{{ SUBMISSION_PORT | default('587') }}"
+        SMTPS_PORT: "{{ SMTPS_PORT | default('465') }}"
+        SMTP_PORT: "{{ SMTP_PORT | default('25') }}"
+        API_KEY: "{{ API_KEY }}"
+        API_KEY_READ_ONLY: "{{ API_KEY_READ_ONLY }}"
+        API_ALLOW_FROM: "{{ API_ALLOW_FROM | default('invalid') }}"
+        COMPOSE_PROJECT_NAME: "{{ COMPOSE_PROJECT_NAME }}"
+        SKIP_FTS: "{{ SKIP_FTS | default('y') }}"
+        SKIP_CLAMD: "{{ SKIP_CLAMD | default('n') }}"
+        SKIP_OLEFY: "{{ SKIP_OLEFY | default('n') }}"
+        SKIP_SOGO: "{{ SKIP_SOGO | default('n') }}"
+        ALLOW_ADMIN_EMAIL_LOGIN: "{{ ALLOW_ADMIN_EMAIL_LOGIN | default('n') }}"
+        MASTER: "{{ MASTER | default('y') }}"
+        DEV_MODE: "{{ DEV_MODE | default('n') }}"
+        DEMO_MODE: "{{ DEMO_MODE | default('n') }}"
+      volumes:
+        - ./data/hooks/phpfpm:/hooks:Z
+        - ./data/web:/web:z
+        - ./data/conf/rspamd/dynmaps:/dynmaps:ro,z
+        - ./data/conf/rspamd/custom/:/rspamd_custom_maps:z
+        - rspamd-vol-1:/var/lib/rspamd
+        - mysql-socket-vol-1:/var/run/mysqld/
+        - ./data/conf/sogo/:/etc/sogo/:z
+      labels:
+        ofelia.enabled: "true"
+        ofelia.job-exec.phpfpm_keycloak_sync.schedule: "@every 1m"
+        ofelia.job-exec.phpfpm_keycloak_sync.no-overlap: "true"
+        ofelia.job-exec.phpfpm_keycloak_sync.command: '/bin/bash -c "php /crons/keycloak-sync.php || exit 0"'
+
+  - name: Start sogo-mailcow container
+    containers.podman.podman_container:
+      name: sogo-mailcow
+      image: ghcr.io/mailcow/sogo:1.133
+      state: started
+      restart_policy: always
+      networks:
+        - name: mailcow-network
+          ipv4_address: "{{ IPV4_NETWORK }}.248"
+          aliases:
+            - sogo
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      env:
+        DBNAME: "{{ DBNAME }}"
+        DBUSER: "{{ DBUSER }}"
+        DBPASS: "{{ DBPASS }}"
+        TZ: "{{ TZ }}"
+        LOG_LINES: "{{ LOG_LINES | default('9999') }}"
+        MAILCOW_HOSTNAME: "{{ MAILCOW_HOSTNAME }}"
+        MAILCOW_PASS_SCHEME: "{{ MAILCOW_PASS_SCHEME | default('BLF-CRYPT') }}"
+        ACL_ANYONE: "{{ ACL_ANYONE | default('disallow') }}"
+        ALLOW_ADMIN_EMAIL_LOGIN: "{{ ALLOW_ADMIN_EMAIL_LOGIN | default('n') }}"
+        IPV4_NETWORK: "{{ IPV4_NETWORK }}"
+        SOGO_EXPIRE_SESSION: "{{ SOGO_EXPIRE_SESSION | default('480') }}"
+        SKIP_SOGO: "{{ SKIP_SOGO | default('n') }}"
+        MASTER: "{{ MASTER | default('y') }}"
+        REDISPASS: "{{ REDISPASS }}"
+      volumes:
+        - ./data/hooks/sogo:/hooks:Z
+        - ./data/conf/sogo/:/etc/sogo/:z
+        - ./data/web/inc/init_db.inc.php:/init_db.inc.php:z
+        - mysql-socket-vol-1:/var/run/mysqld/
+        - sogo-web-vol-1:/sogo_web
+        - sogo-userdata-backup-vol-1:/sogo_backup
+      labels:
+        ofelia.enabled: "true"
+        ofelia.job-exec.sogo_sessions.schedule: "@every 1m"
+        ofelia.job-exec.sogo_sessions.command: '/bin/bash -c "[[ $${MASTER} == y ]] && /usr/local/bin/gosu sogo /usr/sbin/sogo-tool -v expire-sessions $${SOGO_EXPIRE_SESSION} || exit 0"'
+
+  - name: Start postfix-mailcow container
+    containers.podman.podman_container:
+      name: postfix-mailcow
+      image: ghcr.io/mailcow/postfix:1.80
+      state: started
+      restart_policy: always
+      capabilities:
+        - NET_BIND_SERVICE
+      networks:
+        - name: mailcow-network
+          ipv4_address: "{{ IPV4_NETWORK }}.253"
+          aliases:
+            - postfix
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      ports:
+        - "{{ SMTP_PORT | default('25') }}:25"
+        - "{{ SMTPS_PORT | default('465') }}:465"
+        - "{{ SUBMISSION_PORT | default('587') }}:587"
+      env:
+        LOG_LINES: "{{ LOG_LINES | default('9999') }}"
+        TZ: "{{ TZ }}"
+        DBNAME: "{{ DBNAME }}"
+        DBUSER: "{{ DBUSER }}"
+        DBPASS: "{{ DBPASS }}"
+        REDISPASS: "{{ REDISPASS }}"
+        MAILCOW_HOSTNAME: "{{ MAILCOW_HOSTNAME }}"
+        SPAMHAUS_DQS_KEY: "{{ SPAMHAUS_DQS_KEY | default('') }}"
+      volumes:
+        - ./data/hooks/postfix:/hooks:Z
+        - ./data/conf/postfix:/opt/postfix/conf:z
+        - ./data/assets/ssl:/etc/ssl/mail/:ro,z
+        - postfix-vol-1:/var/spool/postfix
+        - crypt-vol-1:/var/lib/zeyple
+        - rspamd-vol-1:/var/lib/rspamd
+        - mysql-socket-vol-1:/var/run/mysqld/
+
+  - name: Start memcached-mailcow container
+    containers.podman.podman_container:
+      name: memcached-mailcow
+      image: memcached:alpine
+      state: started
+      restart_policy: always
+      networks:
+        - name: mailcow-network
+          aliases:
+            - memcached
+      env:
+        TZ: "{{ TZ }}"
+
+  - name: Start nginx-mailcow container
+    containers.podman.podman_container:
+      name: nginx-mailcow
+      image: ghcr.io/mailcow/nginx:1.03
+      state: started
+      restart_policy: always
+      networks:
+        - name: mailcow-network
+          aliases:
+            - nginx
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      ports:
+        - "{{ HTTPS_BIND | default('') }}:{{ HTTPS_PORT | default('443') }}:{{ HTTPS_PORT | default('443') }}"
+        - "{{ HTTP_BIND | default('') }}:{{ HTTP_PORT | default('80') }}:{{ HTTP_PORT | default('80') }}"
+      env:
+        HTTPS_PORT: "{{ HTTPS_PORT | default('443') }}"
+        HTTP_PORT: "{{ HTTP_PORT | default('80') }}"
+        MAILCOW_HOSTNAME: "{{ MAILCOW_HOSTNAME }}"
+        ADDITIONAL_SERVER_NAMES: "{{ ADDITIONAL_SERVER_NAMES | default('') }}"
+        TZ: "{{ TZ }}"
+        SKIP_SOGO: "{{ SKIP_SOGO | default('n') }}"
+        SKIP_RSPAMD: "{{ SKIP_RSPAMD | default('n') }}"
+        DISABLE_IPv6: "{{ DISABLE_IPv6 | default('n') }}"
+        HTTP_REDIRECT: "{{ HTTP_REDIRECT | default('n') }}"
+        IPV4_NETWORK: "{{ IPV4_NETWORK }}"
+      volumes:
+        - ./data/web:/web:ro,z
+        - ./data/conf/rspamd/dynmaps:/dynmaps:ro,z
+        - ./data/assets/ssl/:/etc/ssl/mail/:ro,z
+        - ./data/conf/nginx/:/etc/nginx/conf.d/:z
+        - ./data/conf/rspamd/meta_exporter:/meta_exporter:ro,z
+        - sogo-web-vol-1:/usr/lib/GNUstep/SOGo/
+
+  - name: Start acme-mailcow container
+    containers.podman.podman_container:
+      name: acme-mailcow
+      image: ghcr.io/mailcow/acme:1.92
+      state: started
+      restart_policy: always
+      networks:
+        - name: mailcow-network
+          aliases:
+            - acme
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      env:
+        LOG_LINES: "{{ LOG_LINES | default('9999') }}"
+        ACME_CONTACT: "{{ ACME_CONTACT | default('') }}"
+        ADDITIONAL_SAN: "{{ ADDITIONAL_SAN | default('') }}"
+        AUTODISCOVER_SAN: "{{ AUTODISCOVER_SAN | default('y') }}"
+        MAILCOW_HOSTNAME: "{{ MAILCOW_HOSTNAME }}"
+        DBNAME: "{{ DBNAME }}"
+        DBUSER: "{{ DBUSER }}"
+        DBPASS: "{{ DBPASS }}"
+        SKIP_LETS_ENCRYPT: "{{ SKIP_LETS_ENCRYPT | default('n') }}"
+        COMPOSE_PROJECT_NAME: "{{ COMPOSE_PROJECT_NAME }}"
+        TZ: "{{ TZ }}"
+        REDISPASS: "{{ REDISPASS }}"
+      volumes:
+        - ./data/web/.well-known/acme-challenge:/var/www/acme:z
+        - ./data/assets/ssl:/var/lib/acme/:z
+        - ./data/assets/ssl-example:/var/lib/ssl-example/:ro,Z
+        - mysql-socket-vol-1:/var/run/mysqld/
+
+  - name: Start watchdog-mailcow container
+    containers.podman.podman_container:
+      name: watchdog-mailcow
+      image: ghcr.io/mailcow/watchdog:2.08
+      state: started
+      restart_policy: always
+      networks:
+        - name: mailcow-network
+          aliases:
+            - watchdog
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      tmpfs:
+        - /tmp
+      env:
+        IPV6_NETWORK: "{{ IPV6_NETWORK }}"
+        LOG_LINES: "{{ LOG_LINES | default('9999') }}"
+        TZ: "{{ TZ }}"
+        DBNAME: "{{ DBNAME }}"
+        DBUSER: "{{ DBUSER }}"
+        DBPASS: "{{ DBPASS }}"
+        DBROOT: "{{ DBROOT }}"
+        USE_WATCHDOG: "{{ USE_WATCHDOG | default('n') }}"
+        MAILCOW_HOSTNAME: "{{ MAILCOW_HOSTNAME }}"
+        COMPOSE_PROJECT_NAME: "{{ COMPOSE_PROJECT_NAME }}"
+        IPV4_NETWORK: "{{ IPV4_NETWORK }}"
+        SKIP_CLAMD: "{{ SKIP_CLAMD | default('n') }}"
+        SKIP_LETS_ENCRYPT: "{{ SKIP_LETS_ENCRYPT | default('n') }}"
+        SKIP_SOGO: "{{ SKIP_SOGO | default('n') }}"
+        HTTPS_PORT: "{{ HTTPS_PORT | default('443') }}"
+        REDISPASS: "{{ REDISPASS }}"
+      volumes:
+        - rspamd-vol-1:/var/lib/rspamd
+        - mysql-socket-vol-1:/var/run/mysqld/
+        - postfix-vol-1:/var/spool/postfix
+        - ./data/assets/ssl:/etc/ssl/mail/:ro,z
+
+  - name: Start dockerapi-mailcow container
+    containers.podman.podman_container:
+      name: dockerapi-mailcow
+      image: ghcr.io/mailcow/dockerapi:2.11
+      state: started
+      restart_policy: always
+      security_opt:
+        - label=disable
+      networks:
+        - name: mailcow-network
+          aliases:
+            - dockerapi
+      dns_servers:
+        - "{{ IPV4_NETWORK }}.254"
+      env:
+        DBROOT: "{{ DBROOT }}"
+        TZ: "{{ TZ }}"
+        REDISPASS: "{{ REDISPASS }}"
+      volumes:
+        - /var/run/podman/podman.sock:/var/run/docker.sock:ro
+
+  - name: Start olefy-mailcow container
+    containers.podman.podman_container:
+      name: olefy-mailcow
+      image: ghcr.io/mailcow/olefy:1.15
+      state: started
+      restart_policy: always
+      networks:
+        - name: mailcow-network
+          aliases:
+            - olefy
+      env:
+        TZ: "{{ TZ }}"
+        OLEFY_BINDADDRESS: "0.0.0.0"
+        OLEFY_BINDPORT: "10055"
+        OLEFY_TMPDIR: "/tmp"
+        OLEFY_PYTHON_PATH: "/usr/bin/python3"
+        OLEFY_OLEVBA_PATH: "/usr/bin/olevba"
+        OLEFY_LOGLVL: "20"
+        OLEFY_MINLENGTH: "500"
+        OLEFY_DEL_TMP: "1"
+        SKIP_OLEFY: "{{ SKIP_OLEFY | default('n') }}"
+
+  - name: Start ofelia-mailcow container
+    containers.podman.podman_container:
+      name: ofelia-mailcow
+      image: mcuadros/ofelia:latest
+      state: started
+      restart_policy: always
+      command: daemon --docker -f label=com.docker.compose.project={{ COMPOSE_PROJECT_NAME }}
+      security_opt:
+        - label=disable
+      networks:
+        - name: mailcow-network
+          aliases:
+            - ofelia
+      env:
+        TZ: "{{ TZ }}"
+        COMPOSE_PROJECT_NAME: "{{ COMPOSE_PROJECT_NAME }}"
+      volumes:
+        - /var/run/podman/podman.sock:/var/run/docker.sock:ro
+      labels:
+        ofelia.enabled: "true"
+
+  - name: Start ipv6nat-mailcow container
+    containers.podman.podman_container:
+      name: ipv6nat-mailcow
+      image: robbertkl/ipv6nat
+      state: started
+      restart_policy: always
+      privileged: true
+      network_mode: host
+      security_opt:
+        - label=disable
+      env:
+        TZ: "{{ TZ }}"
+      volumes:
+        - /var/run/podman/podman.sock:/var/run/docker.sock:ro
+        - /lib/modules:/lib/modules:ro
+
+  - name: Display deployment status
+    debug:
+      msg: |
+        Mailcow deployment completed!
+        
+        Access your Mailcow installation at:
+        - HTTPS: https://{{ MAILCOW_HOSTNAME }}:{{ HTTPS_PORT | default('443') }}
+        - HTTP: http://{{ MAILCOW_HOSTNAME }}:{{ HTTP_PORT | default('80') }}
+        
+        Check container status with:
+        podman ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
