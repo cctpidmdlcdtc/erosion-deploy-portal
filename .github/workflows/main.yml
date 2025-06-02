@@ -24,4 +24,4 @@ jobs:
       - name: Ejecutar playbook
         run: |
           source ~/.venvs/ansible/bin/activate
-          ansible-playbook -i hosts.yml deploy-portal.yml --limit explosivo --check
+          ansible-playbook -i hosts.yml deploy-portal.yml --limit explosivo --check --tags paco
