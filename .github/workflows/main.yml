@@ -1,0 +1,27 @@
+---
+name: Deploy core
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Crear entorno virtual de Ansible
+        run: |
+          python3 -m venv ~/.venvs/ansible
+          source ~/.venvs/ansible/bin/activate
+          pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Ejecutar playbook
+        run: |
+          source ~/.venvs/ansible/bin/activate
+          ansible-playbook -i hosts.yml deploy-portal.yml --limit explosivo --check
